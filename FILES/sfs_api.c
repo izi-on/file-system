@@ -1,5 +1,8 @@
 #include "disk_emu.h"
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 /* DEFINE CONSTANTS (constants for disk sizes of structs defined with structs) */
 
@@ -7,13 +10,13 @@
 #define FIELD_SIZE 4
 #define UPPER_LIMIT_ARRAY 1024*1024
 #define UPPER_LIMIT_FD_TABLE 100
-#define MAX_NAME_SIZE 32
+#define MAX_NAME_SIZE 32 // last byte is for null terminator
 
 /* IN-MEMORY STRUCTURES DEFINITION */
 
 typedef struct {
-    int inode;
-    int rw_pointer;
+    int i_node_num;
+    int rw_pointer; //points to current byte in file
     int used;
 } FileDescriptor;
 
@@ -54,11 +57,32 @@ int NUM_OF_BITMAP_BLOCKS;
 
 /* DEFINE GLOBAL VARIABLES RELATED TO IN-MEMORY STRUCTURES */
 
-FileDescriptor* fd_table[UPPER_LIMIT_FD_TABLE];
+FileDescriptor fd_table[UPPER_LIMIT_FD_TABLE];
 uint8_t i_node_table_bitmap[UPPER_LIMIT_ARRAY]; //acts like a cache
 iNode* i_node_table[UPPER_LIMIT_ARRAY]; //acts like a cache
 DirTable root_dir; //acts like a cache
 uint8_t free_bitmap[UPPER_LIMIT_ARRAY]; //acts like a cache
+
+
+
+// writes to the bitmap buffer
+void write_to_bitmap_block_buffer(uint8_t bitmap_block_buffer[], uint8_t bitmap_entries[], int num_of_entries, int start_byte) {
+    for (int i = 0; i < num_of_entries; i++) {
+        int byte_num = i / 8;
+        int bit_num = i % 8;
+        bitmap_block_buffer[start_byte + byte_num] = bitmap_block_buffer[start_byte + byte_num] | (bitmap_entries[i] << (7-bit_num));
+    }
+    printf("Done writing to bitmap\n");
+}
+
+// converts bitmap buffer (block buffer) to array of booleans 
+void read_from_bitmap_block_buffer(uint8_t bitmap_block_buffer[], uint8_t bitmap_entries[], int num_of_entries, int start_byte) {
+    for (int i = 0; i < num_of_entries; i++) {
+        int byte_num = i / 8;
+        int bit_num = i % 8;
+        bitmap_entries[i] = (bitmap_block_buffer[start_byte + byte_num] >> (7-bit_num)) & 1;
+    }
+}
 
 // writes data (an integer) to a block, where each entry is a byte. 
 // returns 0 on success, -1 if data is too large to fit in block, -2 if ptr is out of bounds
@@ -85,7 +109,7 @@ int write_int_to_buf(int data, int* ptr, uint8_t block[], int size) {
     // write bytes to block
     for (int i = 0; i < 4; i++) {
         block[*ptr] = bytes[i];
-        *ptr++;
+        *ptr = *ptr + 1;
     }
 
     printf("Done writing field to buffer\n");
@@ -95,7 +119,7 @@ int write_int_to_buf(int data, int* ptr, uint8_t block[], int size) {
 //reads data (an integer) from a block buffer, where each entry is a byte.
 //returns 0 on success, -2 if ptr is out of bounds
 //modifies ptr to point to the next byte in the block
-int read_int_from_buf(int* buffer, int* ptr, uint8_t block[], int size) {
+int read_int_from_buf(int* data, int* ptr, uint8_t block[], int size) {
     printf("Reading field from buffer...\n");
     if (*ptr > size) {
         printf("Error: ptr out of bounds\n");
@@ -106,20 +130,20 @@ int read_int_from_buf(int* buffer, int* ptr, uint8_t block[], int size) {
     uint8_t bytes[4];
     for (int i = 0; i < 4; i++) {
         bytes[i] = block[*ptr];
-        *ptr++;
+        *ptr = *ptr + 1;
     }
 
     //combine bytes into data
-    int data = 0;
-    data = data | bytes[0];
-    data = data << 8;
-    data = data | bytes[1];
-    data = data << 8;
-    data = data | bytes[2];
-    data = data << 8;
-    data = data | bytes[3];
+    int res = 0;
+    res = res | bytes[0];
+    res = res << 8;
+    res = res | bytes[1];
+    res = res << 8;
+    res = res | bytes[2];
+    res = res << 8;
+    res = res | bytes[3];
 
-    *buffer = data;
+    *data = res;
 
     printf("Done reading field from buffer\n");
     return 0;
@@ -147,6 +171,20 @@ void get_i_node_block_coords(int i_node_num, int* block_num, int* ptr) {
     *block_num = (i_node_num * I_NODE_SIZE_DISK) / BLOCK_SIZE + 2;
     *ptr = i_node_num * I_NODE_SIZE_DISK % BLOCK_SIZE;
     printf("Done getting i-node block coords\n");
+}
+
+//gets the block number and byte pointer to the block where the data is stored
+void get_block_coords_from_rw_ptr(int rw_pointer, int* block_num, int* ptr) {
+    printf("Getting data block coords...\n");
+    *block_num = rw_pointer / BLOCK_SIZE;
+    *ptr = rw_pointer % BLOCK_SIZE;
+    printf("Done getting data block coords\n");
+}
+
+void calculate_num_of_blocks(int ptr, int length, int* num_of_blocks) {
+    printf("Calculating number of blocks...\n");
+    *num_of_blocks = (ptr + length + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    printf("Done calculating number of blocks\n");
 }
 
 // writes i node to i node table (disk and in-memory cache)
@@ -236,28 +274,18 @@ void load_i_node_bitmap() {
     printf("Done loading i-node bitmap from disk\n");
 }
 
-// converts bitmap buffer (block buffer) to array of booleans 
-void read_from_bitmap_block_buffer(uint8_t bitmap_block_buffer[], uint8_t bitmap_entries[], int num_of_entries, int start_byte) {
-    for (int i = 0; i < num_of_entries; i++) {
-        int byte_num = i / 8;
-        int bit_num = i % 8;
-        bitmap_entries[i] = (bitmap_block_buffer[start_byte + byte_num] >> (7-bit_num)) & 1;
-    }
-}
 
-// writes to the bitmap buffer
-void write_to_bitmap_block_buffer(uint8_t bitmap_block_buffer[], uint8_t bitmap_entries[], int num_of_entries, int start_byte) {
-    for (int i = 0; i < num_of_entries; i++) {
-        int byte_num = i / 8;
-        int bit_num = i % 8;
-        bitmap_block_buffer[start_byte + byte_num] = bitmap_block_buffer[start_byte + byte_num] | (bitmap_entries[i] << (7-bit_num));
-    }
-    printf("Done writing to bitmap\n");
-}
+
 
 //get specific data block using i-node
-void get_block(iNode* i_node, int block_num, uint8_t buf[]) {
+int get_block(iNode* i_node, int block_num, uint8_t buf[]) {
     printf("Getting block %d...\n", block_num);
+
+    if (block_num >= i_node->size) {
+        printf("Error: block number out of bounds\n");
+        return -1;
+    }
+
     if (block_num < 12) {
         //direct pointer
         read_blocks(i_node->data_ptrs[block_num], 1, buf);
@@ -266,62 +294,44 @@ void get_block(iNode* i_node, int block_num, uint8_t buf[]) {
         uint8_t indirect_block[BLOCK_SIZE];
         read_blocks(i_node->indirectPointer, 1, indirect_block);
         int ptr = (block_num - 12) * FIELD_SIZE;
-        int block_num;
-        read_int_from_buf(&block_num, &ptr, indirect_block, BLOCK_SIZE);
-        read_blocks(block_num, 1, buf);
+        int block_to_read;
+        read_int_from_buf(&block_to_read, &ptr, indirect_block, BLOCK_SIZE);
+        read_blocks(block_to_read, 1, buf);
     }
     printf("Done getting block %d\n", block_num);
+    return 0;
 }
 
-//save specific data block using i-node
-void save_block(iNode* i_node, int block_num, uint8_t buf[]) {
-    printf("Saving block %d...\n", block_num);
-    if (block_num < 12) {
+//get specified amount of blocks from i-node until 
+void get_blocks(iNode* i_node, int start_block_num, int num_of_blocks, uint8_t buf[]) {
+    printf("Getting blocks...\n");
+    for (int i = 0; i < num_of_blocks; i++) {
+        if (get_block(i_node, start_block_num + i, &buf[i*BLOCK_SIZE]) == -1) {
+            return;
+        }
+    }
+    printf("Done getting blocks\n");
+}
+
+// TODO abstract the block num checking function (<12 or indirect)
+// marks the next i-node slot with the data block number in-memory and on disk
+void mark_data_block_on_i_node(iNode* i_node, int data_block_num) {
+    printf("Marking data block %d on i-node...\n", data_block_num);
+    int index = i_node->size;
+    if (index < 12) {
         //direct pointer
-        write_blocks(i_node->data_ptrs[block_num], 1, buf);
+        i_node->data_ptrs[index] = data_block_num;
+        write_to_i_node_table(i_node);
     } else {
         //indirect pointer
         uint8_t indirect_block[BLOCK_SIZE];
         read_blocks(i_node->indirectPointer, 1, indirect_block);
-        int ptr = (block_num - 12) * FIELD_SIZE;
-        int block_num_to_write;
-        read_int_from_buf(&block_num_to_write, &ptr, &indirect_block, BLOCK_SIZE);
-        write_blocks(block_num_to_write, 1, buf);
+        int ptr = (index - 12) * FIELD_SIZE;
+        write_int_to_buf(data_block_num, &ptr, indirect_block, BLOCK_SIZE);
+        write_blocks(i_node->indirectPointer, 1, indirect_block);        
     }
-    printf("Done saving block %d\n", block_num);
-}
-
-// loads data from blocks into buffer
-int load_data_from_i_node(iNode* i_node, uint8_t buf[]) {
-    printf("Loading data from blocks...\n");
-
-    int num_of_blocks = i_node->size;
-
-    if (num_of_blocks == 0) {
-        printf("Nothing to load\n");
-        return -1;
-    }
-
-    for (int i = 0; i < num_of_blocks; i++) {
-        get_block(i_node, i, &buf[i*BLOCK_SIZE]);
-    }
-
-    printf("Done loading data from blocks\n");
-}
-
-// reserve data block by updating corresponding free bitmap entry
-void reserve_data_block(int block_num) {
-    printf("Reserving data block %d...\n", block_num);
-    //update free bitmap
-    free_bitmap[block_num] = 1;
-    //update free bitmap on disk
-    int buf_size = BLOCK_SIZE*NUM_OF_BITMAP_BLOCKS;
-    uint8_t bitmap_block[buf_size]; //buffer
-    read_blocks(START_BLOCK_BITMAP, NUM_OF_BITMAP_BLOCKS, bitmap_block);
-    int start_ptr = 0;
-    write_to_bitmap(bitmap_block, buf_size, start_ptr, free_bitmap);
-    write_blocks(START_BLOCK_BITMAP, NUM_OF_BITMAP_BLOCKS, bitmap_block);
-    printf("Done reserving data block %d\n", block_num);
+    i_node->size++;
+    printf("Done marking data block %d on i-node\n", data_block_num);
 }
 
 // find available data block
@@ -343,6 +353,97 @@ int find_available_data_block(int* block_num) {
     return 0;
 }
 
+// reserve data block by updating corresponding free bitmap entry
+void reserve_data_block(int block_num) {
+    printf("Reserving data block %d...\n", block_num);
+    //update free bitmap
+    free_bitmap[block_num] = 1;
+    //update free bitmap on disk
+    int buf_size = BLOCK_SIZE*NUM_OF_BITMAP_BLOCKS;
+    uint8_t bitmap_block[buf_size]; //buffer
+    read_blocks(START_BLOCK_BITMAP, NUM_OF_BITMAP_BLOCKS, bitmap_block);
+    int start_ptr = 0;
+    write_to_bitmap_block_buffer(bitmap_block, free_bitmap, NUM_OF_DATA_BLOCKS, start_ptr);
+    write_blocks(START_BLOCK_BITMAP, NUM_OF_BITMAP_BLOCKS, bitmap_block);
+    printf("Done reserving data block %d\n", block_num);
+}
+
+// finds and reserves a data block, and writes number of block to block_num
+// and updates the i-node that requires the block
+void allocate_data_block(int* block_num) {
+    printf("Allocating data block...\n");
+    int res = find_available_data_block(block_num);
+    if (res == -1) {
+        printf("Error: no available data blocks\n");
+        return;
+    }
+    reserve_data_block(*block_num);
+    printf("Done allocating data block\n");
+}
+
+//save specific data block using i-node
+int save_block(iNode* i_node, int block_num, uint8_t buf[]) {
+    printf("Saving block %d...\n", block_num);
+
+    if (block_num > i_node->size) {
+        printf("Error: block number out of bounds\n");
+        return -1;
+    }
+
+    if (block_num == i_node->size) { // allocate new data block 
+        int data_block_num;
+        allocate_data_block(&data_block_num);
+        mark_data_block_on_i_node(i_node, data_block_num);
+    }
+
+    if (block_num < 12) {
+        //direct pointer
+        write_blocks(i_node->data_ptrs[block_num], 1, buf);
+    } else {
+        //indirect pointer
+        uint8_t indirect_block[BLOCK_SIZE];
+        read_blocks(i_node->indirectPointer, 1, indirect_block);
+        int ptr = (block_num - 12) * FIELD_SIZE;
+        int block_num_to_write;
+        read_int_from_buf(&block_num_to_write, &ptr, indirect_block, BLOCK_SIZE);
+        write_blocks(block_num_to_write, 1, buf);
+    }
+    printf("Done saving block %d\n", block_num);
+    return 0;
+}
+
+//save specified amount of blocks from i-node
+void save_blocks(iNode* i_node, int start_block_num, int num_of_blocks, uint8_t buf[]) {
+    printf("Saving blocks...\n");
+    for (int i = 0; i < num_of_blocks; i++) {
+        save_block(i_node, start_block_num + i, &buf[i*BLOCK_SIZE]);
+    }
+    printf("Done saving blocks\n");
+}
+
+// loads data from blocks into buffer
+int load_data_from_i_node(iNode* i_node, uint8_t buf[]) {
+    printf("Loading data from blocks...\n");
+
+    int num_of_blocks = i_node->size;
+
+    if (num_of_blocks == 0) {
+        printf("Nothing to load\n");
+        return -1;
+    }
+
+    for (int i = 0; i < num_of_blocks; i++) {
+        get_block(i_node, i, &buf[i*BLOCK_SIZE]);
+    }
+
+    printf("Done loading data from blocks\n");
+    return 0;
+}
+
+
+
+
+
 //find available i-node table slot 
 int find_available_i_node(int* i_node_num) {
     printf("Finding available i-node...\n");
@@ -362,18 +463,7 @@ int find_available_i_node(int* i_node_num) {
     return 0;
 }
 
-// finds and reserves a data block, and writes number of block to block_num
-// and updates the i-node that requires the block
-void allocate_data_block(int* block_num) {
-    printf("Allocating data block...\n");
-    int res = find_available_data_block(block_num);
-    if (res == -1) {
-        printf("Error: no available data blocks\n");
-        return;
-    }
-    reserve_data_block(*block_num);
-    printf("Done allocating data block\n");
-}
+
 
 //writes the superblock of the disk, moves pointer also to next avail byte in block
 int write_superblock(int* ptr,int magic,int block_size,int max_block,int i_node_table_size,int root_dir_i_node,int num_of_files) {
@@ -471,6 +561,7 @@ void mksfs(int fresh) {
         
         /* STEP 1: CREATE SUPERBLOCK*/
 
+        printf("CREATING SUPERBLOCK\n");
         int ptr = 0;
         write_superblock(&ptr,MAGIC,BLOCK_SIZE,MAX_BLOCK,I_NODE_TABLE_SIZE,ROOT_DIR_INODE_IDX,0);
         //set important vars
@@ -479,14 +570,17 @@ void mksfs(int fresh) {
         NUM_OF_DATA_BLOCKS = (8*(MAX_BLOCK-START_BLOCK_DATA_BLOCKS)*BLOCK_SIZE - 8*BLOCK_SIZE + 1)/(8*BLOCK_SIZE + 1);
         START_BLOCK_BITMAP = START_BLOCK_DATA_BLOCKS + NUM_OF_DATA_BLOCKS;
         NUM_OF_BITMAP_BLOCKS = MAX_BLOCK - START_BLOCK_BITMAP;
+        printf("DONE CREATING SUPERBLOCK\n");
 
         /* STEP 2: CREATE ROOT DIR */ 
 
+        printf("CREATING ROOT DIR\n");
         //create i-node
         iNode* root_dir_i_node = malloc(sizeof(iNode));
         init_empty_i_node(root_dir_i_node, ROOT_DIR_INODE_IDX);
         allocate_data_block(&root_dir_i_node->data_ptrs[0]);
         write_to_i_node_table(root_dir_i_node);
+        printf("DONE CREATING ROOT DIR\n");
 
     } else {
         
@@ -532,7 +626,7 @@ void mksfs(int fresh) {
 }
 
 // initializes a directory entry with the file name and i_node_num
-int init_entry(DirEntry* entry, char* name, int i_node_num) {
+void init_entry(DirEntry* entry, char* name, int i_node_num) {
     printf("Creating entry...\n");
     entry->used = 1;
     for (int i = 0; i < MAX_NAME_SIZE; i++) {
@@ -605,13 +699,13 @@ int create_new_file(char* name, int* i_node_num) {
     return 0;
 }
 
-int sfs_getnextfilename(char*) {
+// int sfs_getnextfilename(char*) {
 
-}
+// }
 
-int sfs_getfilesize(const char*) {
+// int sfs_getfilesize(const char*) {
 
-}
+// }
 
 //checks if file exists in root directory, if it does also get the i-node number
 int does_file_exist(char* name, int* i_node_num) {
@@ -626,6 +720,15 @@ int does_file_exist(char* name, int* i_node_num) {
 
 //acts the same way as fopen(), returns a file descriptor
 int sfs_fopen(char* name) {
+
+    printf("OPENING FILE...\n");
+    //check length of name
+    int name_len = strlen(name);
+    if (name_len >= MAX_NAME_SIZE) {
+        printf("Error: name too long\n");
+        return -1;
+    }
+
     int i_node_num;
 
     //check if file exists
@@ -641,10 +744,11 @@ int sfs_fopen(char* name) {
 
     //create file descriptor 
     for (int i = 0; i < UPPER_LIMIT_FD_TABLE; i++) {
-        if (fd_table[i]->used == 0) {
-            fd_table[i]->inode = i_node_num;
-            fd_table[i]->rw_pointer = 0;
-            fd_table[i]->used = 1;
+        if (fd_table[i].used == 0) {
+            fd_table[i].i_node_num = i_node_num;
+            fd_table[i].rw_pointer = 0;
+            fd_table[i].used = 1;
+            printf("DONE OPENING FILE\n");
             return i;
         }
     }
@@ -653,22 +757,78 @@ int sfs_fopen(char* name) {
     return -1;
 }
 
-int sfs_fclose(int) {
-
+void sfs_fclose(int fd) {
+    printf("Closing file...\n");
+    fd_table[fd].used = 0;
+    printf("Done closing file\n");
 }
 
-int sfs_fwrite(int, const char*, int) {
+int sfs_fwrite(int fd, char* buf, int length) {
+    printf("Writing to file...\n");
 
+    FileDescriptor file_descriptor = fd_table[fd];
+    iNode* i_node = i_node_table[file_descriptor.i_node_num];
+
+    int rw_pointer = file_descriptor.rw_pointer;
+    int block_num, ptr, num_of_blocks;
+
+    get_block_coords_from_rw_ptr(rw_pointer, &block_num, &ptr);
+    calculate_num_of_blocks(ptr, length, &num_of_blocks);
+
+    //populate buffer with the data with the blocks we will be changing
+    uint8_t data_buf[BLOCK_SIZE*num_of_blocks];
+    get_blocks(i_node, block_num, num_of_blocks, data_buf);
+
+    //write data to buffer
+    for (int i = 0; i < length; i++) {
+        data_buf[ptr++] = buf[i];
+    }
+
+    //save buffer to disk
+    save_blocks(i_node, block_num, num_of_blocks, data_buf);
+
+    //update file descriptor
+    file_descriptor.rw_pointer += length;
+
+    printf("Done writing to file\n");
+    return 0;
 }
 
-int sfs_fread(int, char*, int) {
+int sfs_fread(int fd, char* buf, int length) {
+    printf("Reading from file...\n");
 
+    FileDescriptor file_descriptor = fd_table[fd];
+    iNode* i_node = i_node_table[file_descriptor.i_node_num];
+
+    int rw_pointer = file_descriptor.rw_pointer;
+    int block_num, ptr, num_of_blocks;
+
+    get_block_coords_from_rw_ptr(rw_pointer, &block_num, &ptr);
+    calculate_num_of_blocks(ptr, length, &num_of_blocks);
+
+    //intermediate buffer to store data from disk
+    uint8_t data_buf[BLOCK_SIZE*num_of_blocks];
+    get_blocks(i_node, block_num, num_of_blocks, data_buf);
+
+    //store data in buffer
+    for (int i = 0; i < length; i++) {
+        buf[i] = data_buf[ptr++];
+    }
+
+    printf("Done reading from file\n");
+    return 0;
 }
 
-int sfs_fseek(int, int) {
+int sfs_fseek(int fd, int offset) {
+    printf("Seeking file...\n");
 
+    FileDescriptor file_descriptor = fd_table[fd];
+    file_descriptor.rw_pointer = offset;
+
+    printf("Done seeking file\n");
+    return 0;
 }
 
-int sfs_remove(char*) {
+// int sfs_remove(char*) {
 
-}
+// }

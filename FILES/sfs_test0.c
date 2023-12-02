@@ -18,6 +18,7 @@ int main() {
     sfs_fseek(f, 0);
     sfs_fread(f, out_data, sizeof(out_data)+1);
     printf("%s\n", out_data);
+    printf("LMAOOOO\n");
     sfs_fclose(f);
     //sfs_remove("some_name.txt");
 }
