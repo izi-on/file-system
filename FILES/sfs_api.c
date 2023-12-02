@@ -571,9 +571,9 @@ int create_new_file(char* name, int* i_node_num) {
     
     //create i-node
     int res = find_available_i_node(i_node_num);
-    if (res == -1) {
+    if (res != 0) {
         printf("Error: no available i-nodes\n");
-        return -1;
+        return res;
     }
     iNode* new_i_node = malloc(sizeof(iNode));
     init_empty_i_node(new_i_node, *i_node_num);
@@ -588,6 +588,14 @@ int create_new_file(char* name, int* i_node_num) {
             root_dir.entries[i] = entry;
             break;
         }
+    }
+    if (i == root_dir.num_of_entries) {
+        if (root_dir.num_of_entries == UPPER_LIMIT_ARRAY) {
+            printf("Error: root directory full\n");
+            return -2;
+        }
+        root_dir.entries[i] = entry;
+        root_dir.num_of_entries++;
     }
     write_dir_entry_to_disk(entry, i);
 
@@ -605,10 +613,11 @@ int sfs_getfilesize(const char*) {
 
 }
 
-//checks if file exists in root directory 
-int does_file_exist(char* name) {
+//checks if file exists in root directory, if it does also get the i-node number
+int does_file_exist(char* name, int* i_node_num) {
     for (int i = 0; i < root_dir.num_of_entries; i++) {
         if (strcmp(root_dir.entries[i]->name, name) == 0) {
+            *i_node_num = root_dir.entries[i]->i_node;
             return 1;
         }
     }
@@ -620,10 +629,10 @@ int sfs_fopen(char* name) {
     int i_node_num;
 
     //check if file exists
-    int exists = does_file_exist(name);
+    int exists = does_file_exist(name, &i_node_num);
 
     //if file does not exist, create it 
-    if (exists) {
+    if (!exists) {
         if (create_new_file(name, &i_node_num) != 0) {
             printf("Error: could not create file\n");
             return -1;
