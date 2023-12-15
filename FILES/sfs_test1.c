@@ -12,7 +12,7 @@
  * upper-case letters and periods ('.') characters. Feel free to
  * change this if your implementation differs.
  */
-#define MAX_FNAME_LENGTH 32   /* Assume at most 20 characters (16.3) */
+#define MAX_FNAME_LENGTH 20   /* Assume at most 20 characters (16.3) */
 
 /* The maximum number of files to attempt to open or create.  NOTE: we
  * do not _require_ that you support this many files. This is just to
@@ -44,9 +44,11 @@ static char test_str[] = "The quick brown fox jumps over the lazy dog.\n";
  
 char *rand_name() 
 {
+  printf("here1\n");
   char fname[MAX_FNAME_LENGTH];
   int i;
 
+  printf("here2\n");
   for (i = 0; i < MAX_FNAME_LENGTH; i++) {
     if (i != 16) {
       fname[i] = 'A' + (rand() % 26);
@@ -56,7 +58,9 @@ char *rand_name()
     }
   }
   fname[i] = '\0';
-  return (strdup(fname));
+  printf("here3\n");
+  char dup = strdup(fname);
+  return dup;
 }
 
 /* The main testing program
@@ -77,13 +81,16 @@ main(int argc, char **argv)
   int error_count = 0;
   int tmp;
 
-  mksfs(1);                     /* Initialize the file system. */
+  mksfs(1);                     /* Initialize the fiae system. */
 
   /* First we open two files and attempt to write data to them.
    */
   for (i = 0; i < 2; i++) {
+    printf("Rand name...\n");
     names[i] = rand_name();
+    printf("Opening...\n");
     fds[i] = sfs_fopen(names[i]);
+    printf("created %s with %d fd\n", names[i], fds[i]);
     if (fds[i] < 0) {
       fprintf(stderr, "ERROR: creating first test file %s\n", names[i]);
       error_count++;

@@ -46,10 +46,10 @@ typedef struct {
 
 /* DEFINE GLOBAL VARS CONCERNING FILE SYSTEM STRUCTURE */
 
-unsigned int BLOCK_SIZE = 4096;
+extern unsigned int BLOCK_SIZE;
 unsigned int I_NODE_TABLE_SIZE = 1024;
 unsigned int ROOT_DIR_INODE_IDX = 0; 
-unsigned int MAX_BLOCK = 1024;
+extern unsigned int MAX_BLOCK;
 unsigned int START_BLOCK_DATA_BLOCKS;
 unsigned int START_BLOCK_BITMAP;
 unsigned int START_BYTE_I_NODE_BITMAP;
@@ -65,7 +65,21 @@ iNode* i_node_table[UPPER_LIMIT_ARRAY]; //acts like a cache
 DirTable root_dir; //acts like a cache
 unsigned char free_bitmap[UPPER_LIMIT_ARRAY]; //acts like a cache
 
+void print_dir() {
+    printf("Printing directory...\n");
+    for (unsigned int i = 0; i < root_dir.num_of_entries; i++) {
+        printf("Entry %d: ", i);
+        printf("used: %d ", root_dir.entries[i]->used);
+        printf("name: %s ", root_dir.entries[i]->name);
+        printf("i_node_num: %d\n", root_dir.entries[i]->i_node_num);
+    }
+    printf("Printing bitmap...\n");
+    for (unsigned int i = 0; i < root_dir.num_of_entries; i++) {
+        printf("%d \n", free_bitmap[i]);
+    }
+    printf("Done printing directory\n");
 
+}
 
 // writes to the bitmap buffer
 void write_to_bitmap_block_buffer(unsigned char bitmap_block_buffer[], unsigned char bitmap_entries[], unsigned int num_of_entries, unsigned int start_byte) {
@@ -263,7 +277,7 @@ int get_block(iNode* i_node, unsigned int block_num, unsigned char buf[]) {
 
     unsigned int num_of_blocks_for_i_node = (i_node->size + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
-    if (block_num >= num_of_blocks_for_i_node) {
+    if (block_num > num_of_blocks_for_i_node) {
         printf("Error: block number out of bounds\n");
         return -1;
     }
@@ -295,7 +309,7 @@ void get_blocks(iNode* i_node, unsigned int start_block_num, unsigned int num_of
 
 // TODO abstract the block num checking function (<12 or indirect)
 // marks the index-th slot with the data block number in-memory and on disk
-int mark_data_block_on_i_node(iNode* i_node, unsigned int data_block_num, unsigned int index) {  
+unsigned int mark_data_block_on_i_node(iNode* i_node, unsigned int data_block_num, unsigned int index) {  
     printf("Marking data block %d on i-node...\n", data_block_num);
     if (index < 12) {
         //direct pointer
@@ -318,6 +332,7 @@ int mark_data_block_on_i_node(iNode* i_node, unsigned int data_block_num, unsign
 // find available data block
 int find_available_data_block(unsigned int* block_num) {
     printf("Finding available data block...\n");
+    print_dir();
     unsigned int found = 0;
     for (unsigned int i = 0; i < NUM_OF_DATA_BLOCKS; i++) {
         if (free_bitmap[i] == 0) {
@@ -330,7 +345,7 @@ int find_available_data_block(unsigned int* block_num) {
         printf("Error: no available data blocks\n");
         return -1;
     }
-    printf("Done finding available data block\n");
+    printf("Done finding available data block, found %d\n", *block_num);
     return 0;
 }
 
@@ -338,7 +353,7 @@ int find_available_data_block(unsigned int* block_num) {
 void reserve_data_block(unsigned int block_num) {
     printf("Reserving data block %d...\n", block_num);
     //update free bitmap
-    free_bitmap[block_num] = 1;
+    free_bitmap[block_num - START_BLOCK_DATA_BLOCKS] = 1;
     //update free bitmap on disk
     unsigned int buf_size = BLOCK_SIZE*NUM_OF_BITMAP_BLOCKS;
     unsigned char bitmap_block[buf_size]; read_blocks(START_BLOCK_BITMAP, NUM_OF_BITMAP_BLOCKS, bitmap_block);
@@ -365,7 +380,7 @@ int save_block(iNode* i_node, unsigned int block_num, unsigned char buf[]) {
     printf("Saving block %d...\n", block_num);
     
     unsigned int num_of_blocks_for_i_node = (i_node->size + BLOCK_SIZE - 1) / BLOCK_SIZE;
-    if (block_num >= num_of_blocks_for_i_node) {
+    if (block_num > num_of_blocks_for_i_node) {
         printf("Error: block number out of bounds\n");
         return -1;
     }
@@ -421,6 +436,7 @@ int find_available_i_node(unsigned int* i_node_num) {
     unsigned int found = 0;
     for (unsigned int i = 0; i < I_NODE_TABLE_SIZE; i++) {
         if (i_node_table_bitmap[i] == 0) {
+            printf("Found available i-node %d\n", i);
             *i_node_num = i;
             found = 1;
             break;
@@ -487,6 +503,7 @@ void init_empty_i_node(iNode* i_node, unsigned int id) {
         i_node->data_ptrs[i] = 0;
     }
     i_node->indirectPointer = 0;
+    i_node_table_bitmap[id] = 1;
 }
 
 //loads the data of the superblock into the buffer
@@ -602,8 +619,26 @@ void init_entry(DirEntry* entry, char* name, unsigned int i_node_num) {
     printf("Done creating entry\n");
 }
 
+void print_i_node(iNode* i_node) {
+    printf("Printing i-node...\n");
+    printf("mode: %d\n", i_node->mode);
+    printf("link_cnt: %d\n", i_node->link_cnt);
+    printf("uid: %d\n", i_node->uid);
+    printf("size: %d\n", i_node->size);
+    printf("data_ptrs: ");
+    for (unsigned int i = 0; i < 12; i++) {
+        printf("%d ", i_node->data_ptrs[i]);
+    }
+    printf("\n");
+    printf("indirectPointer: %d\n", i_node->indirectPointer);
+    printf("Done printing i-node\n");
+}
+
+//TODO handle dir expansion
+
 // writes a directory entry to disk
 void write_dir_entry_to_disk(DirEntry* entry, unsigned int idx) {
+    printf("Writing directory entry to disk...\n");
     unsigned int block_num = DIR_ENTRY_SIZE_DISK * idx / BLOCK_SIZE;
     unsigned int ptr = DIR_ENTRY_SIZE_DISK * idx % BLOCK_SIZE;
 
@@ -622,7 +657,7 @@ void write_dir_entry_to_disk(DirEntry* entry, unsigned int idx) {
     //write buffer to disk
     save_block(i_node_table[ROOT_DIR_INODE_IDX], block_num, &buffer[0]);
     save_block(i_node_table[ROOT_DIR_INODE_IDX], block_num+1, &buffer[BLOCK_SIZE]);
-
+    printf("Done writing directory entry to disk\n");
 }
 
 //expands i-node to desired new length
@@ -636,7 +671,9 @@ int expand_i_node(iNode* i_node, unsigned int num_of_bytes) {
     unsigned int num_of_blocks = ((i_node->size-1) % BLOCK_SIZE + num_of_bytes) / BLOCK_SIZE;
     for (unsigned int i = 0; i < num_of_blocks; i++) {
         unsigned int block_num; allocate_data_block(&block_num);
-        if (!mark_data_block_on_i_node(i_node, block_num, num_of_blocks_i_node + i)) {
+        int res = mark_data_block_on_i_node(i_node, block_num, num_of_blocks_i_node + i);
+        printf("%d\n", res);
+        if (res != 0) {
             printf("Error: could not mark data block on i-node\n");
             return -1;
         };
@@ -650,6 +687,8 @@ int expand_i_node(iNode* i_node, unsigned int num_of_bytes) {
     return 0;
 }
 
+
+// TODO handle dir expansion
 //creates an entry in the directory table with the file name and i_node_num
 int create_new_file(char* name, unsigned int* i_node_num) {
     printf("Creating new file...\n");
@@ -731,21 +770,29 @@ int sfs_fopen(char* name) {
             printf("Error: could not create file\n");
             return -1;
         }
-    }
-
-    //create file descriptor 
-    for (unsigned int i = 0; i < UPPER_LIMIT_FD_TABLE; i++) {
-        if (fd_table[i].used == 0) {
-            fd_table[i].i_node_num = i_node_num;
-            fd_table[i].rw_pointer = 0;
-            fd_table[i].used = 1;
-            printf("DONE OPENING FILE\n");
-            return i;
+        //create file descriptor 
+        for (unsigned int i = 0; i < UPPER_LIMIT_FD_TABLE; i++) {
+            if (fd_table[i].used == 0) {
+                fd_table[i].i_node_num = i_node_num;
+                fd_table[i].rw_pointer = 0;
+                fd_table[i].used = 1;
+                printf("DONE OPENING FILE\n");
+                return i;
+            }
         }
+        printf("Error: no available file descriptors\n");
+        return -1;
+    } else {
+        //find corresponding file descriptor
+        for (unsigned int i = 0; i < UPPER_LIMIT_FD_TABLE; i++) {
+            if (fd_table[i].used == 1 && fd_table[i].i_node_num == i_node_num) {
+                printf("DONE OPENING FILE\n");
+                return i;
+            }
+        }
+        printf("Could not find file descriptor, but found file name\n");
+        return -1;
     }
-
-    printf("Error: no available file descriptors\n");
-    return -1;
 }
 
 
@@ -759,6 +806,7 @@ int sfs_fclose(int fd) {
 
     fd_table[fd].used = 0;
     printf("Done closing file\n");
+    return 0;
 }
 
 int sfs_getfilesize(char* name) {
@@ -779,15 +827,23 @@ int sfs_getfilesize(char* name) {
 }
 
 int sfs_fwrite(int fd, char* buf, int length) {
-    printf("Writing to file...\n");
+    printf("WRITING TO FILE...\n");
 
     FileDescriptor file_descriptor = fd_table[fd];
 
     iNode* i_node; read_from_i_node_table(file_descriptor.i_node_num, &i_node, 0);
 
     unsigned int rw_pointer = file_descriptor.rw_pointer;
-    unsigned int block_num, ptr, num_of_blocks;
 
+    //check if we need to expand i-node size
+    if (rw_pointer + length >= i_node->size) {
+        if (expand_i_node(i_node, rw_pointer + length - i_node->size + 1) != 0) {
+            printf("Error: could not expand i-node\n");
+            return -1;
+        }
+    }
+
+    unsigned int block_num, ptr, num_of_blocks;
     get_block_coords_from_rw_ptr(rw_pointer, &block_num, &ptr);
     calculate_num_of_blocks(ptr, length, &num_of_blocks);
 
@@ -800,21 +856,13 @@ int sfs_fwrite(int fd, char* buf, int length) {
         data_buf[ptr++] = buf[i];
     }
 
-    //check if we need to expand i-node size
-    if (rw_pointer + length >= i_node->size) {
-        if (!expand_i_node(i_node, rw_pointer + length - i_node->size + 1)) {
-            printf("Error: could not expand i-node\n");
-            return -1;
-        }
-    }
-
     //save buffer to disk
     save_blocks(i_node, block_num, num_of_blocks, data_buf);
 
     //update file descriptor
     file_descriptor.rw_pointer += length;
 
-    printf("Done writing to file\n");
+    printf("DONE WRITING TO FILE\n");
     return 0;
 }
 
@@ -853,8 +901,55 @@ int sfs_fseek(int fd, int offset) {
     return 0;
 }
 
-// TODO implement
-// int sfs_remove(char* name) {
-//     printf("Removing file...\n");
+int sfs_remove(char* name) {
+    printf("Removing file...\n");
+    // step 1: find file in root directory
+    unsigned int i_node_num;
+    unsigned int found = does_file_exist(name, &i_node_num);
+    if (!found) {
+        printf("Error: file does not exist\n");
+        return -1;
+    }
 
-// }
+    // step 2: remove entry from root directory
+    for (unsigned int i = 0; i < root_dir.num_of_entries; i++) {
+        if (strcmp(root_dir.entries[i]->name, name) == 0) {
+            root_dir.entries[i]->used = 0;
+            write_dir_entry_to_disk(root_dir.entries[i], i);
+            break;
+        }
+    }
+
+    //step 3: mark all data blocks as free
+    iNode* i_node; read_from_i_node_table(i_node_num, &i_node, 0);
+    unsigned int num_of_blocks = (i_node->size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    for (unsigned int i = 0; i < num_of_blocks; i++) {
+        if (i < 12) {
+            //direct pointer
+            free_bitmap[i_node->data_ptrs[i]] = 0;
+        } else {
+            //indirect pointer
+            unsigned char indirect_block[BLOCK_SIZE]; read_blocks(i_node->indirectPointer, 1, indirect_block);
+            unsigned int ptr = (i - 12) * FIELD_SIZE;
+            unsigned int block_num; read_int_from_buf(&block_num, &ptr, indirect_block, BLOCK_SIZE);
+            free_bitmap[block_num] = 0;
+        }
+    }
+    //update free bitmap on disk
+    unsigned int buf_size = BLOCK_SIZE*NUM_OF_BITMAP_BLOCKS;
+    unsigned char bitmap_block[buf_size]; read_blocks(START_BLOCK_BITMAP, NUM_OF_BITMAP_BLOCKS, bitmap_block);
+    unsigned int start_ptr = 0;
+    write_to_bitmap_block_buffer(bitmap_block, free_bitmap, NUM_OF_DATA_BLOCKS, start_ptr);
+    write_blocks(START_BLOCK_BITMAP, NUM_OF_BITMAP_BLOCKS, bitmap_block);
+
+    //step 4: mark i-node as free
+    i_node_table_bitmap[i_node_num] = 0;
+    //update i node bitmap on disk
+    unsigned char bitmap_block2[BLOCK_SIZE]; read_blocks(0, 1, bitmap_block2); //super block
+    unsigned int start_ptr2 = START_BYTE_I_NODE_BITMAP;
+    write_to_bitmap_block_buffer(bitmap_block2, i_node_table_bitmap, I_NODE_TABLE_SIZE, start_ptr2);
+    write_blocks(0, 1, bitmap_block2);
+
+    printf("Done removing file\n");
+    return 0;
+}
